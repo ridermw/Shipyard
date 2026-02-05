@@ -48,14 +48,15 @@ sy init
 
 # Output:
 # ✓ Created .shipyard/config.yaml
-# ✓ Created 27 GitHub labels
+# ✓ Created 14 GitHub labels
 # ✓ Created issue templates
 # ✓ Created PR template
-# 
+#
 # Next steps:
 # 1. Enable Discussions in GitHub Settings
-# 2. Create Discussion categories (see docs/github/discussions.md)
-# 3. Run `sy status` to verify setup
+# 2. Create Discussion categories (see discussions.md)
+# 3. Configure branch protection rules (see merge.md)
+# 4. Run `sy status` to verify setup
 ```
 
 ### sy status
@@ -66,7 +67,8 @@ Show the current state of all work items and agents.
 sy status [options]
 
 Options:
-  --agent <name>  Filter by agent (pm, coder, reviewer, owner, librarian)
+  --agent <name>  Filter by agent (pm, coder, reviewer)
+  --stale         Show stale claims (assigned but no update for 30+ min)
   --json          Output as JSON
 ```
 
@@ -79,21 +81,21 @@ sy status
 # ===============
 #
 # Discussions (Planning):
-#   #42 "Better error messages"     status:planned
-#   #45 "Search improvements"       status:needs-planning
+#   #42 "Better error messages"     (closed, planned)
+#   #45 "Search improvements"       (no status label)
 #
-# Issues (Ready for Coder):
+# Issues (Ready):
 #   #100 [FEATURE] Error messages   priority:high
 #   #101 [BUG] Login timeout        priority:medium
 #
 # PRs (In Review):
-#   #150 Implement error messages   status:ready-for-review
+#   #150 Implement error messages   status:review
 #
 # PRs (Approved):
 #   (none)
 #
-# Docs Pending:
-#   #145 Auth flow update           docs:pending
+# Blocked:
+#   (none)
 ```
 
 ### sy queue
@@ -104,7 +106,7 @@ Show work items available for a specific agent.
 sy queue <agent>
 
 Arguments:
-  agent         Agent name: pm, coder, reviewer, owner, librarian
+  agent         Agent name: pm, coder, reviewer
 ```
 
 **Example**:
@@ -121,6 +123,9 @@ sy queue coder
 #
 # Awaiting fixes (changes requested):
 #   #150 Error messages PR          priority:high   Comments:3
+#
+# Blocked (needs rebase/CI fix):
+#   (none)
 ```
 
 ### sy run
@@ -131,7 +136,7 @@ Manually trigger an agent skill.
 sy run <agent> [options]
 
 Arguments:
-  agent         Agent name: pm, coder, reviewer, owner, librarian
+  agent         Agent name: pm, coder, reviewer
 
 Options:
   --dry-run     Show what would happen without executing
@@ -146,7 +151,7 @@ sy run coder
 # Starting Coder agent...
 # Found 2 items in queue
 # Processing: #100 [FEATURE] Error messages
-# 
+#
 # [Claude Code skill executes]
 #
 # Completed: PR #150 created
@@ -162,6 +167,34 @@ sy run coder --dry-run
 #    - Would create worktree
 #    - Would implement based on Issue spec
 #    - Would create PR linking to #100
+```
+
+### sy merge
+
+Check and execute merges for approved PRs.
+
+```bash
+sy merge [options]
+
+Options:
+  --dry-run     Show what would be merged without executing
+  --pr <id>     Merge specific PR
+```
+
+**Example**:
+```bash
+sy merge
+
+# Output:
+# Checking approved PRs...
+#
+# PR #150: Implement error messages
+#   ✓ Review approved
+#   ✓ CI passing
+#   ✓ No conflicts
+#   → Squash merging...
+#   ✓ Merged PR #150
+#   ✓ Closed Issue #100
 ```
 
 ### sy update
@@ -247,24 +280,25 @@ sy config --list
 # Output:
 # Shipyard Configuration
 # ======================
-# 
+#
 # agents.pm.enabled: true
 # agents.coder.enabled: true
 # agents.reviewer.enabled: true
-# agents.owner.enabled: true
-# agents.librarian.enabled: true
-# 
-# budget.warning_threshold: 0.8
-# budget.stop_threshold: 0.9
+#
+# budget.session_max_tokens: 100000
+#
+# merge.strategy: squash
+# merge.auto_merge: true
+# merge.delete_branch: true
 #
 # polling.interval: 300
 ```
 
 ```bash
-sy config budget.warning_threshold 0.7
+sy config budget.session_max_tokens 150000
 
 # Output:
-# Updated budget.warning_threshold: 0.8 → 0.7
+# Updated budget.session_max_tokens: 100000 → 150000
 ```
 
 ### sy worktrees
@@ -314,22 +348,21 @@ agents:
   reviewer:
     enabled: true
     model: sonnet
-  owner:
-    enabled: true
-    model: sonnet
-  librarian:
-    enabled: true
-    model: sonnet
 
-# Budget management
+# Budget management (per-session)
 budget:
-  warning_threshold: 0.8    # Warn at 80% usage
-  stop_threshold: 0.9       # Stop at 90% usage
+  session_max_tokens: 100000  # Max tokens per agent session
+
+# Merge settings
+merge:
+  strategy: squash            # squash, merge, or rebase
+  auto_merge: true            # Enable GitHub auto-merge on PR creation
+  delete_branch: true         # Delete source branch after merge
 
 # Polling settings (future use)
 polling:
   enabled: false
-  interval: 300             # Seconds between polls
+  interval: 300               # Seconds between polls
 
 # Worktree settings
 worktrees:

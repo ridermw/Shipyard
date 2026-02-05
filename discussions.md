@@ -22,10 +22,10 @@ Configure these categories in your repository's Discussion settings:
 **Workflow**:
 ```
 1. Human or PM creates Discussion describing a need
-2. PM adds status:needs-planning label
-3. Community/agents discuss and refine
+2. Community/agents discuss and refine
+3. PM adds status:planning label when it begins work
 4. PM creates spec and Issues
-5. PM adds status:planned label
+5. PM closes/answers the Discussion
 6. Discussion serves as permanent record
 ```
 
@@ -39,7 +39,6 @@ Configure these categories in your repository's Discussion settings:
 **Who uses it**:
 - Coder proposes architectural changes
 - Reviewer raises technical concerns
-- Owner weighs in on major decisions
 - Humans provide guidance
 
 **Workflow**:
@@ -59,14 +58,13 @@ Configure these categories in your repository's Discussion settings:
 **Format**: Open ended
 
 **Who uses it**:
-- Owner creates after significant features merge
-- Librarian links completed work
+- PM or humans create after significant features merge
 - All agents can contribute lessons learned
 - Humans review and adjust process
 
 **Workflow**:
 ```
-1. Owner creates Retrospective after milestone
+1. PM or human creates Retrospective after milestone
 2. Links all related PRs, Issues, Discussions
 3. Summarizes what went well and what didn't
 4. Proposes process improvements
@@ -179,9 +177,53 @@ Configure these categories in your repository's Discussion settings:
 - [ ] [Improvement 2]
 
 ## Metrics
-- Time to complete: X days
 - PRs created: X
 - Review cycles: X
+```
+
+## PM Polling Query
+
+PM uses the GitHub GraphQL API to find Discussions in the Planning category that have no status label (unprocessed):
+
+```graphql
+query {
+  repository(owner: "OWNER", name: "REPO") {
+    discussions(
+      categoryId: "PLANNING_CATEGORY_ID"
+      first: 10
+      orderBy: { field: CREATED_AT, direction: ASC }
+    ) {
+      nodes {
+        id
+        number
+        title
+        createdAt
+        labels(first: 10) {
+          nodes {
+            name
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Client-side filter: select Discussions where no label name starts with `status:`.
+
+To get the `categoryId`, use:
+
+```graphql
+query {
+  repository(owner: "OWNER", name: "REPO") {
+    discussionCategories(first: 10) {
+      nodes {
+        id
+        name
+      }
+    }
+  }
+}
 ```
 
 ## Agent Behavior in Discussions
@@ -204,11 +246,7 @@ When PM completes planning:
 - Included: [What's in scope]
 - Deferred: [What's out of scope for now]
 
-## Timeline Estimate
-[Rough estimate if applicable]
-
-This Discussion will remain open for reference.
-Status updated to `status:planned`.
+This Discussion is now closed. Created Issues are tagged status:ready.
 ```
 
 ### Coder in Discussions
@@ -220,23 +258,6 @@ When Coder starts work:
 
 Referencing this Discussion for context.
 Will update here if clarification needed.
-```
-
-### Owner in Discussions
-
-```
-When feature is complete:
-
-[OWNER] Feature complete and merged.
-
-## Delivered
-- PR #150: [Title]
-- PR #151: [Title]
-
-All acceptance criteria from this Discussion have been met.
-Consider this Discussion resolved.
-
-A Retrospective Discussion will follow.
 ```
 
 ## Setup Script
@@ -278,4 +299,4 @@ echo "4. Set appropriate formats and descriptions"
 1. One topic per Discussion
 2. Use appropriate category
 3. Link related items bidirectionally
-4. Keep Discussions open as reference even after completion
+4. Keep Discussions open as reference even after completion (PM closes when planning is done, but the record persists)

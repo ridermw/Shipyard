@@ -19,7 +19,7 @@ Templates will be created when `sy init` scaffolds a repository.
 name: Feature Request
 about: Propose a new feature (usually created by PM from Discussion)
 title: '[FEATURE] '
-labels: type:feature, status:ready-for-coder
+labels: type:feature, status:ready
 assignees: ''
 ---
 
@@ -32,9 +32,9 @@ Discussion: #
 
 ## Acceptance Criteria
 <!-- Checklist that defines "done" -->
-- [ ] 
-- [ ] 
-- [ ] 
+- [ ]
+- [ ]
+- [ ]
 
 ## Technical Notes
 <!-- Any implementation hints from planning -->
@@ -58,7 +58,7 @@ Discussion: #
 name: Bug Report
 about: Report a defect
 title: '[BUG] '
-labels: type:bug, status:ready-for-coder
+labels: type:bug, status:ready
 assignees: ''
 ---
 
@@ -66,9 +66,9 @@ assignees: ''
 <!-- What is broken? -->
 
 ## Steps to Reproduce
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 ## Expected Behavior
 <!-- What should happen? -->
@@ -95,7 +95,7 @@ assignees: ''
 name: Chore
 about: Maintenance, refactoring, or technical debt
 title: '[CHORE] '
-labels: type:chore, status:ready-for-coder
+labels: type:chore, status:ready
 assignees: ''
 ---
 
@@ -109,8 +109,8 @@ assignees: ''
 <!-- What files/areas will be affected? -->
 
 ## Acceptance Criteria
-- [ ] 
-- [ ] 
+- [ ]
+- [ ]
 
 ## Priority
 <!-- high / medium / low -->
@@ -145,20 +145,24 @@ Closes #
 
 ## Changes
 <!-- List of changes made -->
-- 
-- 
-- 
+-
+-
+-
 
 ## Testing
 <!-- How was this tested? -->
 - [ ] Unit tests pass
 - [ ] Manual testing performed
-- [ ] 
+- [ ]
+
+## Documentation
+<!-- Documentation updates included in this PR -->
+- [ ] Documentation updated for user-facing changes (or N/A)
+- [ ] CHANGELOG.md updated (if applicable)
 
 ## Checklist
 - [ ] Code follows project conventions
 - [ ] Tests added/updated
-- [ ] Documentation updated if needed
 - [ ] No unrelated changes included
 - [ ] Acceptance criteria from Issue are met
 
@@ -245,6 +249,10 @@ Closes #{issue_number}
 - [x] Unit tests pass
 - [x] Manual testing performed
 
+## Documentation
+- [x] Documentation updated for user-facing changes
+- [x] CHANGELOG.md updated
+
 ## Checklist
 - [x] Code follows project conventions
 - [x] Tests added/updated
@@ -270,6 +278,6 @@ Templates should be validated during `sy init`:
 Potential future template features:
 
 1. **Dynamic templates**: Select template based on Issue labels
-2. **Auto population**: Pre fill fields from linked Discussion
+2. **Auto-population**: Pre-fill fields from linked Discussion
 3. **Validation rules**: Enforce required fields before submission
 4. **Template versioning**: Track template changes over time

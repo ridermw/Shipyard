@@ -10,19 +10,25 @@ All Shipyard skills follow a common pattern:
 
 ```
 1. Query GitHub for items matching agent's criteria
-2. Filter out items already claimed by another agent
-3. Filter out items the agent created (no self approval)
+2. Filter out items already claimed (have an assignee)
+3. Filter out items the agent created (no self-approval)
 4. Select highest priority unclaimed item
 5. If no work found, exit gracefully
 ```
 
 ### 2. Claim Phase
 
+Shipyard uses assignee-based optimistic locking to prevent duplicate work:
+
 ```
-1. Add agent label (e.g., agent:coder)
-2. Add in progress label if applicable
-3. Leave comment announcing work has begun
+1. Assign self to the item via gh issue edit N --add-assignee BOT_USERNAME
+2. Re-read the item to verify sole assignee
+3. If conflict detected (multiple assignees): back off, remove self, try next item
+4. On success: add agent label (e.g., agent:coder) and update status label
+5. Leave comment announcing work has begun
 ```
+
+Label-based claiming has a TOCTOU race condition (GitHub label operations are not atomic), so Shipyard uses assignees instead.
 
 ### 3. Work Phase
 
@@ -30,14 +36,14 @@ All Shipyard skills follow a common pattern:
 1. Read relevant context (Discussion, Issue, existing code)
 2. Use subagents for complex analysis without polluting context
 3. Perform the specialized task
-4. Track token usage against budget
+4. Track token usage against per-session cap
 ```
 
 ### 4. Completion Phase
 
 ```
 1. Update GitHub with results (PR, comments, label changes)
-2. Remove in progress label
+2. Remove assignee claim and agent label
 3. Leave summary comment explaining what was done
 4. Exit cleanly
 ```
@@ -49,11 +55,11 @@ All Shipyard skills follow a common pattern:
 All skills use the `gh` CLI for GitHub operations:
 
 ```bash
-# List discussions needing planning
-gh api graphql -f query='...'
-
 # List issues by label
-gh issue list --label "status:ready-for-coder"
+gh issue list --label "status:ready"
+
+# Claim an item (assign self)
+gh issue edit 123 --add-assignee bot-username
 
 # Add a label
 gh issue edit 123 --add-label "status:in-progress"
@@ -74,23 +80,32 @@ All agent communications include a prefix identifying which agent wrote it:
 | PM | `[PM]` |
 | Coder | `[CODER]` |
 | Reviewer | `[REVIEWER]` |
-| Owner | `[OWNER]` |
-| Librarian | `[LIBRARIAN]` |
+
+System-generated messages (stale claim clearance, merge failures) use `[SYSTEM]`.
 
 ### Budget Awareness
 
-Each skill checks token usage at startup and periodically during execution:
+Each skill enforces a per-session token cap:
+
+```yaml
+# .shipyard/config.yaml
+budget:
+  session_max_tokens: 100000
+```
 
 ```
-If usage > 80% of budget:
-  Log warning to GitHub comment
-  Exit without processing new work
+On startup:
+  Read session_max_tokens from config
 
-If usage approaching 80% during work:
-  Save progress to GitHub comment
-  Remove in progress claim
-  Exit gracefully
+During work:
+  Periodically check usage against cap
+  If approaching cap:
+    Save progress to GitHub comment
+    Release claim (remove assignee, remove agent label)
+    Exit gracefully
 ```
+
+There is no cross-session budget tracking. Each invocation is independent. Cost management across sessions is handled externally (API dashboard, billing alerts).
 
 ### Subagent Usage
 
@@ -110,15 +125,15 @@ Main agent continues with only the summary in context
 | PM | `shipyard-pm` | [pm.md](pm.md) |
 | Coder | `shipyard-coder` | [coder.md](coder.md) |
 | Reviewer | `shipyard-reviewer` | [reviewer.md](reviewer.md) |
-| Owner | `shipyard-owner` | [owner.md](owner.md) |
-| Librarian | `shipyard-librarian` | [librarian.md](librarian.md) |
+
+Merge logic is handled by branch protection rules and an optional script. See [merge.md](merge.md).
 
 ## Installation Location
 
 Skills can be installed:
 
 1. **Globally**: In Claude Code's skill directory for use across all repos
-2. **Per Repo**: In `.shipyard/skills/` for repo specific customization
+2. **Per Repo**: In `.shipyard/skills/` for repo-specific customization
 
 The `sy update` command synchronizes skills from the Shipyard repository.
 
