@@ -12,13 +12,31 @@ The PM skill polls for:
 
 ## Claiming
 
-PM uses assignee-based optimistic locking for Discussions that support it, and label-based claiming for those that don't:
+PM uses label-based claiming for Discussions (which have limited assignee support):
 
 1. Add `status:planning` label to the Discussion
-2. Add `agent:pm` label
-3. If another PM has already added `status:planning`, back off
+2. **Immediately re-read the Discussion** to verify claim
+3. Add `agent:pm` label if sole claimer
+4. If another PM has already added `status:planning`, back off
 
-Note: GitHub Discussions have limited assignee support compared to Issues/PRs. The `status:planning` label serves as the primary claim indicator for Discussions.
+### Label-Based Claiming Vulnerability
+
+**WARNING**: Label-based claiming has a TOCTOU race condition. Two PMs polling simultaneously can both add `status:planning` before either verifies, resulting in duplicate planning.
+
+**Mitigation**:
+- **Single PM instance**: Only run one PM agent at a time (recommended)
+- **Verification delay**: After adding label, wait 1-2 seconds before re-reading
+- **Check for competing comments**: If another `[PM]` comment exists, back off
+
+**Backoff on conflict**:
+```
+1. Remove status:planning label
+2. Remove agent:pm label
+3. Wait: base_delay * (2 ^ attempt) + random(0, jitter)
+4. Try next unprocessed Discussion
+```
+
+Note: This vulnerability is acceptable for Phase 1 (manual orchestration with single PM instance). For high-volume automation, consider using a Discussion-level assignee if GitHub adds support, or a separate coordination mechanism.
 
 ## Responsibilities
 
@@ -204,11 +222,18 @@ If PM cannot complete planning:
 
 ## Budget
 
-PM uses a per-session token cap configured in `.shipyard/config.yaml`:
+Budget is enforced externally via CLI flags:
 
-```yaml
-budget:
-  session_max_tokens: 100000
+```bash
+claude -p "..." \
+  --max-turns 10 \
+  --max-budget-usd 2.00
 ```
 
-The agent tracks usage throughout the session and wraps up gracefully when approaching the cap. There is no cross-session tracking.
+If budget/turns exhausted mid-task:
+1. Agent terminates immediately
+2. Claim remains (`status:planning` label still present)
+3. Stale detection (30 min) clears the claim
+4. Next PM invocation picks up from GitHub state
+
+There is no cross-session tracking. See [orchestration.md](orchestration.md).

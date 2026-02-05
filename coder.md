@@ -70,10 +70,11 @@ Coder polls for own PRs with `status:blocked`:
 ```
 1. Check if the block is a merge conflict or CI failure
 2. For merge conflicts:
-   a. Rebase the branch onto main
-   b. Resolve conflicts
-   c. Force-push the rebased branch
-   d. Update status to status:review for re-review
+   a. VERIFY OWNERSHIP: Confirm Coder is still assigned to the PR
+   b. Rebase the branch onto main
+   c. Resolve conflicts
+   d. Force-push the rebased branch (after ownership check)
+   e. Update status to status:review for re-review
 3. For CI failures:
    a. Read CI logs to identify the failure
    b. Fix the issue
@@ -81,6 +82,8 @@ Coder polls for own PRs with `status:blocked`:
    d. Update status to status:review for re-review
 4. If unable to resolve: add status:needs-human and comment explaining the blocker
 ```
+
+**Force-push safety**: Before force-pushing, Coder must verify it still owns the PR. Another agent may have taken over during a stale claim. See [hooks.md](hooks.md) for hook-based enforcement.
 
 ### 5. Worktree Management
 
@@ -92,6 +95,16 @@ Coder creates and manages worktrees:
 3. Keep worktree until PR is merged
 4. Cleanup after merge: git worktree remove .worktrees/feature-123
 ```
+
+**Worktree collision prevention**: Two Coders cannot create the same worktree because the claiming mechanism prevents duplicate work on the same Issue. If worktree already exists:
+
+```
+1. Check if worktree is for this Issue (naming convention)
+2. If yes: reuse existing worktree (resuming previous work)
+3. If naming conflict: use Issue number suffix (.worktrees/feature-123-retry)
+```
+
+**Orphan worktree cleanup**: At session start, Coder can check for orphan worktrees (merged PRs) and clean them up.
 
 ## Output Artifacts
 
@@ -247,14 +260,22 @@ If token budget is running low:
 
 ## Budget
 
-Coder uses a per-session token cap configured in `.shipyard/config.yaml`:
+Budget is enforced externally via CLI flags:
 
-```yaml
-budget:
-  session_max_tokens: 100000
+```bash
+claude -p "..." \
+  --max-turns 20 \
+  --max-budget-usd 5.00
 ```
 
-The agent tracks usage throughout the session and wraps up gracefully when approaching the cap. There is no cross-session tracking.
+If budget/turns exhausted mid-implementation:
+1. Agent terminates immediately
+2. Claim remains (assignee still set)
+3. Partial work may exist in worktree (uncommitted) or branch (committed)
+4. Stale detection (30 min) clears the claim
+5. Next Coder invocation can resume from worktree/branch state
+
+There is no cross-session tracking. See [orchestration.md](orchestration.md).
 
 ## Worktree Cleanup
 

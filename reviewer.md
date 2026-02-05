@@ -139,6 +139,23 @@ If a PR goes through 3 review cycles (changes-requested -> fixes -> review) with
 
 This prevents infinite review loops between Coder and Reviewer.
 
+### Counting Review Cycles
+
+Reviewer counts cycles by reading the PR timeline:
+
+```bash
+# Count status:changes-requested events
+gh pr view $PR_NUMBER --json timelineItems -q \
+  '[.timelineItems.nodes[] | select(.label.name == "status:changes-requested")] | length'
+```
+
+**Algorithm**:
+1. Query PR timeline for label events
+2. Count occurrences of `status:changes-requested` being added
+3. If count >= 3, escalate instead of continuing review
+
+**Race condition note**: Two Reviewers might both think it's cycle 3 and both escalate. This is harmless (item ends up with `status:needs-human` either way), but single-Reviewer operation is recommended.
+
 ## Rejection Path
 
 When a PR is fundamentally misaligned with the Issue (not just needs minor fixes):
@@ -298,11 +315,18 @@ If Reviewer cannot complete review:
 
 ## Budget
 
-Reviewer uses a per-session token cap configured in `.shipyard/config.yaml`:
+Budget is enforced externally via CLI flags:
 
-```yaml
-budget:
-  session_max_tokens: 100000
+```bash
+claude -p "..." \
+  --max-turns 15 \
+  --max-budget-usd 3.00
 ```
 
-The agent tracks usage throughout the session and wraps up gracefully when approaching the cap. There is no cross-session tracking.
+If budget/turns exhausted mid-review:
+1. Agent terminates immediately
+2. Claim remains (assignee still set)
+3. Stale detection (30 min) clears the claim
+4. Item returns to `status:review` for another Reviewer invocation
+
+There is no cross-session tracking. See [orchestration.md](orchestration.md).

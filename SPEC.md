@@ -10,11 +10,15 @@ Shipyard is a lightweight orchestration framework that coordinates multiple Clau
 
 **Stateless Agents**: Each Claude Code instance polls GitHub for work, executes a task, updates GitHub, and terminates. No persistent memory beyond what GitHub stores.
 
+**One-Shot Execution**: Each agent invocation handles one task (or discovers no work). External orchestration (shell scripts, cron, GitHub Actions) provides the loop. Agents do not loop internally. See [orchestration.md](orchestration.md).
+
 **GitHub as Truth**: All communication, planning, and state transitions happen through GitHub primitives (Discussions, Issues, PRs, Labels, Comments, Assignees). This creates a natural audit trail and allows human oversight at any point.
 
-**Token Prudence**: Agents work in isolated contexts. Subagents answer questions without polluting the main context. Each agent session has a configurable token cap.
+**Token Prudence**: Agents work in isolated contexts. Subagents answer questions without polluting the main context. Each agent invocation has a budget cap enforced via `--max-budget-usd`.
 
-**Progressive Automation**: Start with manual orchestration (running skills in separate terminals), then progressively automate with cron/polling as patterns stabilize.
+**Skills + Hooks**: Skills provide agent persona and context. Hooks enforce hard constraints (blocking forbidden operations). See [hooks.md](hooks.md).
+
+**Progressive Automation**: Start with manual orchestration (running agents in separate terminals), then progressively automate with cron/polling as patterns stabilize.
 
 ## System Components
 
@@ -35,13 +39,16 @@ See [labels.md](labels.md) and [discussions.md](discussions.md) for detailed con
 
 ### 2. Agent Skills
 
-Each agent is a Claude Code skill that:
+Each agent is a Claude Code skill invoked via `claude -p`:
 
 1. Polls GitHub for items matching specific labels/states
 2. Claims work by assigning itself and verifying sole assignee
 3. Performs its specialized task
 4. Updates GitHub with results (comments, new items, label changes)
-5. Releases the claim and exits cleanly
+5. Releases the claim
+6. Terminates (via `--max-turns` limit)
+
+External orchestration handles the polling loop. See [orchestration.md](orchestration.md).
 
 | Agent | Skill File | Responsibility |
 |-------|------------|----------------|
@@ -128,40 +135,54 @@ A complete feature lifecycle demonstrates how agents coordinate:
 4. Linked Issue(s) are auto-closed via `Closes #N` in commit message
 5. If merge fails (conflicts): PR gets `status:blocked`, Coder picks up for rebase
 
-## Token Budget Management
+## Budget Management
 
-Each agent skill has a per-session token cap configured in `.shipyard/config.yaml`:
+Budget is enforced externally via Claude Code CLI flags, not internally by agents.
 
-```yaml
-budget:
-  session_max_tokens: 100000  # Max tokens per agent session
+### Per-Invocation Limits
+
+```bash
+claude -p "..." \
+  --max-turns 20 \           # Force termination after N API turns
+  --max-budget-usd 5.00      # Hard budget cap per invocation
 ```
 
-```
-On startup:
-  1. Read session_max_tokens from config
-  2. Track usage throughout the session
+| Agent | Recommended `--max-turns` | Recommended `--max-budget-usd` |
+|-------|---------------------------|-------------------------------|
+| PM | 10 | 2.00 |
+| Coder | 20 | 5.00 |
+| Reviewer | 15 | 3.00 |
 
-During work:
-  1. Periodically check usage against session cap
-  2. If approaching cap, wrap up current task
-  3. Commit progress, leave GitHub comment, release claim
-  4. Exit gracefully for next invocation to continue
-```
+### Why External Enforcement
 
-There is no cross-session budget tracking. Each agent session is independent, and the per-session cap prevents any single invocation from running away. Cost management across sessions is handled externally (Anthropic API dashboard, billing alerts).
+Claude Code does not have a native "exit" signal. The `--max-turns` flag forces termination after N API round-trips, providing predictable resource usage.
+
+If budget or turns are exhausted mid-task:
+
+1. Agent terminates immediately
+2. Claim remains on item (assignee still set)
+3. After 30 minutes with no status update, stale claim detection clears the assignee
+4. Item returns to ready state for next invocation
+
+### Cross-Session Tracking
+
+There is no cross-session budget tracking. Each agent invocation is independent. Cost management across sessions is handled externally (Anthropic API dashboard, billing alerts, orchestration script monitoring).
+
+See [orchestration.md](orchestration.md) for detailed configuration.
 
 ## Security Considerations
 
-**No Self-Approval**: Skills enforce that an agent cannot approve its own work. The Coder skill will not review PRs it created.
+**No Self-Approval**: Enforced via hooks that block `gh pr review --approve` for non-Reviewer agents. Skills also instruct agents not to approve their own work, providing defense in depth. See [hooks.md](hooks.md).
 
 **Human Override**: Humans can intervene at any point by adding/removing labels, closing items, or leaving comments that agents respect.
 
 **Audit Trail**: All actions are recorded in GitHub, providing complete traceability.
 
-**Token Limits**: Per-session budget caps prevent runaway costs.
+**Budget Limits**: `--max-budget-usd` and `--max-turns` flags prevent runaway costs.
 
-**Prompt Injection Defense**: Agent skill instructions include defensive prompts to guard against injection via Issue/PR content. Agents treat all GitHub content (Issue bodies, PR descriptions, comments) as untrusted input. Skill prompts instruct agents to ignore any instructions embedded in work item content that attempt to override agent behavior.
+**Hooks for Enforcement**: Hard constraints (no force push to main, no destructive git commands) are enforced via Claude Code hooks, not just skill instructions. See [hooks.md](hooks.md).
+
+**Prompt Injection Defense**: Agent skill instructions include defensive prompts to guard against injection via Issue/PR content. Agents treat all GitHub content (Issue bodies, PR descriptions, comments) as untrusted input. Skill prompts instruct agents to ignore any instructions embedded in work item content that attempt to override agent behavior. Hooks provide an additional layer by blocking specific dangerous operations regardless of instructions.
 
 ## CLI Interface
 
@@ -187,6 +208,13 @@ sy update
 ```
 
 See [commands.md](commands.md) for full specification.
+
+## Related Documents
+
+- [orchestration.md](orchestration.md) — How agents are invoked and coordinated
+- [hooks.md](hooks.md) — Constraint enforcement via Claude Code hooks
+- [labels.md](labels.md) — Label taxonomy and claiming mechanism
+- [overview.md](overview.md) — Skill architecture patterns
 
 ## Future Considerations
 

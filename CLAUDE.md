@@ -14,6 +14,8 @@ All files are top-level markdown specifications:
 - **ARCHITECTURE.md** - System design, data flow diagrams, component interactions
 - **ROADMAP.md** - Implementation phases (0-6), currently at Phase 0
 - **overview.md** - Skill architecture patterns (polling, claiming, work, completion)
+- **orchestration.md** - External orchestration patterns, Claude Code invocation, budget enforcement
+- **hooks.md** - Constraint enforcement via Claude Code hooks
 - **commands.md** - CLI specification for the `sy` command
 - **labels.md** - GitHub label taxonomy (14 labels across 3 categories + optional type labels)
 - **discussions.md** - GitHub Discussions category configuration
@@ -49,14 +51,16 @@ Discussion (no status) -> PM -> status:planning -> Issues created
 ### Key Design Patterns
 
 - **GitHub as Brain**: All state, communication, and audit trail live in GitHub primitives
+- **One-Shot Execution**: Each agent invocation handles one task; external orchestration provides the loop
 - **Assignee-Based Locking**: Agents claim work via assignees (not labels) to avoid TOCTOU race conditions
+- **Skills + Hooks**: Skills provide persona and context; hooks enforce hard constraints (see hooks.md)
 - **Subagent Pattern**: Agents spawn subagents for analysis to avoid polluting main context (only the summary returns)
 - **Git Worktrees**: Agents use `.worktrees/` for isolated file changes
-- **Per-Session Token Cap**: Each agent session has a configurable token limit; no cross-session tracking
-- **No Self-Approval**: Agents cannot review/approve their own work
+- **External Budget Enforcement**: `--max-turns` and `--max-budget-usd` CLI flags control costs; no internal tracking
+- **No Self-Approval**: Enforced via hooks that block `gh pr review --approve` for non-Reviewer agents
 - **Agent Identity Prefix**: All communications prefixed with `[PM]`, `[CODER]`, or `[REVIEWER]`
 - **Docs in PR**: Documentation updates are included in feature PRs
-- **Recovery Paths**: Stale claims (30 min), blocked items (48h), review cycles (3 max) all have defined escalation
+- **Recovery Paths**: Stale claims (30 min, REQUIRED), blocked items (48h), review cycles (3 max) all have defined escalation
 
 ### Target Repository Layout (after `sy init`)
 
@@ -65,7 +69,10 @@ repo/
 ├── .shipyard/
 │   ├── config.yaml       # Shipyard configuration
 │   ├── skills/           # Local skill overrides
+│   ├── hooks/            # Hook scripts for constraint enforcement
 │   └── templates/        # Issue/PR templates
+├── .claude/
+│   └── settings.json     # Claude Code hooks configuration
 ├── .worktrees/           # Git worktrees for agent isolation
 └── .github/
     ├── ISSUE_TEMPLATE/

@@ -141,6 +141,21 @@ Arguments:
 Options:
   --dry-run     Show what would happen without executing
   --item <id>   Process specific item (Discussion/Issue/PR number)
+  --max-turns   Override max turns from config (default from config)
+  --budget      Override budget from config (default from config)
+```
+
+**What it does**:
+
+Invokes Claude Code with the appropriate skill:
+
+```bash
+# Internally runs:
+claude -p "$(cat .shipyard/skills/$AGENT/SKILL.md) [task prompt]" \
+  --max-turns $MAX_TURNS \
+  --max-budget-usd $BUDGET \
+  --allowedTools "$ALLOWED_TOOLS" \
+  --no-session-persistence
 ```
 
 **Example**:
@@ -149,10 +164,11 @@ sy run coder
 
 # Output:
 # Starting Coder agent...
+# Invoking: claude -p "..." --max-turns 20 --max-budget-usd 5.00
 # Found 2 items in queue
 # Processing: #100 [FEATURE] Error messages
 #
-# [Claude Code skill executes]
+# [Claude Code executes]
 #
 # Completed: PR #150 created
 # Remaining in queue: 1
@@ -167,6 +183,9 @@ sy run coder --dry-run
 #    - Would create worktree
 #    - Would implement based on Issue spec
 #    - Would create PR linking to #100
+#
+# Would invoke:
+# claude -p "..." --max-turns 20 --max-budget-usd 5.00
 ```
 
 ### sy merge
@@ -349,9 +368,17 @@ agents:
     enabled: true
     model: sonnet
 
-# Budget management (per-session)
+# Budget management (per-invocation, enforced via CLI flags)
 budget:
-  session_max_tokens: 100000  # Max tokens per agent session
+  pm:
+    max_turns: 10
+    max_budget_usd: 2.00
+  coder:
+    max_turns: 20
+    max_budget_usd: 5.00
+  reviewer:
+    max_turns: 15
+    max_budget_usd: 3.00
 
 # Merge settings
 merge:
@@ -359,10 +386,14 @@ merge:
   auto_merge: true            # Enable GitHub auto-merge on PR creation
   delete_branch: true         # Delete source branch after merge
 
-# Polling settings (future use)
-polling:
-  enabled: false
-  interval: 300               # Seconds between polls
+# Orchestration settings
+orchestration:
+  mode: manual                # manual, cron, or github-actions
+  interval: 300               # Seconds between polls (for cron mode)
+  stale_detection:
+    enabled: true             # Required for automated modes
+    timeout_minutes: 30
+    check_on_startup: true
 
 # Worktree settings
 worktrees:
@@ -399,6 +430,45 @@ github:
 The CLI is implemented as bash scripts wrapping:
 1. `gh` CLI for GitHub operations
 2. `git` for worktree management
-3. `claude` CLI for running skills
+3. `claude` CLI for running skills (with `-p`, `--max-turns`, `--max-budget-usd`)
+
+### Claude Code Invocation
+
+The `sy run` command constructs a Claude Code invocation:
+
+```bash
+# Example: sy run coder
+claude -p "$(cat .shipyard/skills/coder/SKILL.md)
+
+Poll GitHub Issues with status:ready label.
+If found: claim via assignee, implement in worktree, create PR.
+Also check for own PRs with status:changes-requested or status:blocked.
+If none found: report no work available." \
+  --max-turns 20 \
+  --max-budget-usd 5.00 \
+  --allowedTools "Bash(gh *),Bash(git *),Read,Edit,Write" \
+  --no-session-persistence
+```
+
+### Allowed Tools by Agent
+
+| Agent | `--allowedTools` |
+|-------|------------------|
+| PM | `Bash(gh *)` |
+| Coder | `Bash(gh *),Bash(git *),Read,Edit,Write` |
+| Reviewer | `Bash(gh *),Read` |
+
+### Stale Detection on Startup
+
+When `stale_detection.check_on_startup` is enabled, `sy run` clears stale claims before invoking the agent:
+
+```bash
+# Internal: check for stale claims first
+gh issue list --assignee @me --json number,updatedAt -q \
+  '.[] | select((now - (.updatedAt | fromdateiso8601)) > 1800) | .number' | \
+  xargs -I {} gh issue edit {} --remove-assignee @me
+```
+
+See [orchestration.md](orchestration.md) for full orchestration patterns.
 
 Future versions may be rewritten in a compiled language for speed.

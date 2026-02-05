@@ -71,13 +71,76 @@ This approach works because:
 - In practice, agents poll on different schedules, making true races rare
 - The worst case (both agents back off) is safe, just wasteful
 
-### Stale Claim Detection
+### Backoff Strategy
 
-If an agent crashes or exceeds its token budget mid-task, the claim becomes stale:
+When a claim conflict is detected, agents should use exponential backoff with random jitter:
+
+```
+On conflict:
+  1. Remove self as assignee
+  2. Wait: base_delay * (2 ^ attempt) + random(0, jitter)
+     - base_delay: 1 second
+     - jitter: 0-500ms
+     - max_attempts: 3
+  3. Try claiming the next available item (not the same one)
+```
+
+**Example conflict resolution**:
+```
+Coder-A: Assign to #100 → conflict detected
+Coder-A: Back off, wait 1.2s
+Coder-A: Pick next item (#101) instead
+Coder-A: Assign to #101 → success
+
+Coder-B: Assign to #100 → conflict detected
+Coder-B: Back off, wait 1.4s
+Coder-B: Pick next item (#101) → already claimed
+Coder-B: Pick next item (#102) → assign → success
+```
+
+This prevents tight retry loops and reduces collision frequency with multiple concurrent agents.
+
+### Stale Claim Detection (REQUIRED)
+
+If an agent crashes or hits `--max-turns`/`--max-budget-usd` mid-task, the claim becomes stale.
+
+**Stale detection is REQUIRED for any automated deployment.** Without it, crashed agents leave items permanently stuck.
 
 - **Detection**: Any item with an assignee but no status update for 30 minutes is considered stale
-- **Resolution**: The `sy` CLI (or a cron job) removes the assignee, removes the `agent:*` label, and returns the item to its previous ready state (`status:ready`, `status:review`, etc.)
+- **Resolution**: The `sy` CLI (or orchestration script) removes the assignee, removes the `agent:*` label, and returns the item to its previous ready state
 - **Comment**: A `[SYSTEM]` comment is added noting the stale claim was cleared
+
+### Previous Ready State Recovery
+
+When clearing a stale claim, the item must return to its "previous ready state":
+
+| Current Status | Previous Ready State |
+|----------------|---------------------|
+| `status:in-progress` | `status:ready` |
+| `status:review` with agent:reviewer | `status:review` (remove agent label only) |
+| `status:changes-requested` | `status:changes-requested` (author still assigned) |
+
+**Implementation**: Track the previous status via GitHub timeline events, or use a simple rule:
+- If `status:in-progress` → set to `status:ready`
+- Otherwise → just remove assignee and `agent:*` label, keep status
+
+### Stale Detection Implementation
+
+Run at agent startup or via cron:
+
+```bash
+# Find stale claims (30 min = 1800 seconds)
+gh issue list --assignee @me --json number,updatedAt -q \
+  '.[] | select((now - (.updatedAt | fromdateiso8601)) > 1800) | .number'
+
+# For each stale item:
+# 1. Remove assignee
+# 2. Remove agent:* label
+# 3. If status:in-progress, change to status:ready
+# 4. Add [SYSTEM] comment
+```
+
+See [orchestration.md](orchestration.md) for integration with the orchestration loop.
 
 ## Label Transitions
 

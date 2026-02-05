@@ -23,12 +23,29 @@ This document explains the system design, data flow, and component interactions 
               │    (gh CLI / REST)      │
               └────────────┬────────────┘
                            │
+┌──────────────────────────┼──────────────────────────────────────┐
+│                    ORCHESTRATION LAYER                          │
+│     (shell script / cron / GitHub Actions)                      │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ for agent in pm coder reviewer; do                       │   │
+│  │   claude -p "..." --max-turns N --max-budget-usd M       │   │
+│  │ done                                                      │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  + Stale claim detection (REQUIRED)                             │
+│  + Rate limit monitoring                                         │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
         ┌──────────────────┼──────────────────┐
         │                  │                  │
         ▼                  ▼                  ▼
 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
 │  Claude Code  │  │  Claude Code  │  │  Claude Code  │
 │   (PM Skill)  │  │(Coder Skill)  │  │(Reviewer...)  │
+│               │  │               │  │               │
+│ --max-turns 10│  │--max-turns 20 │  │--max-turns 15 │
+│ --budget 2.00 │  │--budget 5.00  │  │--budget 3.00  │
 └───────────────┘  └───────┬───────┘  └───────────────┘
                            │
                     ┌──────┴──────┐
@@ -39,6 +56,8 @@ This document explains the system design, data flow, and component interactions 
              │(Isolated)│  │(Branch Prot.)│
              └──────────┘  └──────────────┘
 ```
+
+**Key insight**: The orchestration layer is external to Claude Code. Each agent invocation is one-shot; the orchestration script provides the loop.
 
 ## Data Flow
 
@@ -137,6 +156,8 @@ Agent A                          Agent B
 
 In the worst case, both agents back off. This is safe (no duplicate work) and rare in practice since agents poll on different schedules.
 
+**Backoff strategy**: When conflict detected, use exponential backoff with jitter, then try the next available item (not the same one). See [labels.md](labels.md) for details.
+
 ### Subagent Pattern
 
 When an agent needs to answer a question without polluting its main context, it spawns a subagent:
@@ -200,16 +221,28 @@ CI must pass before a PR can be approved or merged:
 
 CI status is checked via GitHub status checks or check runs, not by Shipyard labels. The `status:blocked` label is only added when an agent or the merge script detects a failure that requires action.
 
-## Stale Claim Detection
+## Stale Claim Detection (REQUIRED)
 
-Stale claims are detected and cleared to prevent items from getting permanently stuck:
+Stale claim detection is **mandatory** for any automated deployment. Without it, crashed agents leave items permanently stuck.
 
 | Condition | Timeout | Action |
 |-----------|---------|--------|
 | Item has assignee, no status change | 30 min | Clear assignee, remove `agent:*` label, return to ready state |
 | `status:blocked` with no update | 48 hours | Escalate to `status:needs-human` |
 
-The `sy status --stale` command reports stale items. A cron job or GitHub Action can automate stale claim cleanup.
+### Implementation Options
+
+1. **Run at agent startup** (recommended): Each `sy run` invocation checks for stale claims before polling
+2. **Cron job**: Scheduled task runs `sy status --stale --fix`
+3. **GitHub Action**: Scheduled workflow clears stale claims
+
+### Why "Previous Ready State" Matters
+
+When clearing a stale claim from `status:in-progress`, the item should return to `status:ready`. The stale detector must know the item's previous state.
+
+**Simple rule**: If `status:in-progress` → change to `status:ready`. Otherwise, keep current status, just remove assignee and `agent:*` label.
+
+See [orchestration.md](orchestration.md) for integration details.
 
 ## File System Layout
 
@@ -300,6 +333,40 @@ When a PR has merge conflicts:
 
 1. Auto-merge (or Reviewer) detects conflict, adds `status:blocked` and a comment
 2. Coder polls for own PRs with `status:blocked`
-3. Coder rebases the branch onto main, resolves conflicts
-4. Coder pushes and sets `status:review` for re-review
-5. If rebase is not possible, Coder adds `status:needs-human`
+3. Coder **verifies it still owns the PR** before rebasing (see [hooks.md](hooks.md))
+4. Coder rebases the branch onto main, resolves conflicts
+5. Coder pushes and sets `status:review` for re-review
+6. If rebase is not possible, Coder adds `status:needs-human`
+
+## GitHub API Rate Limits
+
+All agents run under a single GitHub user account and share API quota.
+
+### Limits
+
+| API | Limit | Notes |
+|-----|-------|-------|
+| REST API | 5,000 requests/hour | Most common operations |
+| GraphQL API | 5,000 points/hour | Complex queries |
+| Search API | 30 requests/minute | Polling queries |
+
+### Mitigation
+
+1. **Reasonable polling intervals**: 5-minute intervals are usually sufficient
+2. **Check before running**: `gh api rate_limit --jq '.rate.remaining'`
+3. **Backoff when low**: Skip run if remaining < 100 requests
+4. **Use GraphQL for complex queries**: Batch multiple lookups in one request
+
+### Rate Limit Check
+
+Add to orchestration script:
+
+```bash
+remaining=$(gh api rate_limit --jq '.rate.remaining')
+if [ "$remaining" -lt 100 ]; then
+  echo "[ORCHESTRATION] Rate limit low ($remaining), skipping"
+  exit 0
+fi
+```
+
+See [orchestration.md](orchestration.md) for integration.
